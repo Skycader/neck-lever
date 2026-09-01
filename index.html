@@ -162,7 +162,7 @@ let massKg = 60;    // вес поднимаемого (Б)
 let massAKg = 80;   // масса поднимающего (А)
 let angleDeg = 45;  // угол подъёма руки
 
-let grip = 'underarm'; // 'underarm' | 'wrist'
+let grip = 'underarm'; // 'underarm' (под мышки) | 'neck' (за шею) — выбирается кликом по маркеру на теле Б
 let gradualTransferEnabled = true;
 
 
@@ -187,7 +187,20 @@ const SHOULDER_RATIO = 1 - HEAD_R_FRAC*(2+NECK_LEN_MULT); // высота пле
 const HOLD_POINT_RATIO = 0.73;    // точка хвата (подмышки) ≈ 73% роста от пола = 27% от макушки
 const B_TOP_TO_HOLD_RATIO = 1 - HOLD_POINT_RATIO; // 0.27 от макушки до хвата
 const B_HOLD_TO_FEET_RATIO = HOLD_POINT_RATIO;    // 0.73 от хвата до стоп
+// точка хвата "за шею" — середина видимой шеи, вычислена из тех же констант головы/шеи,
+// чтобы всегда физически совпадать с нарисованной шеей (как и точка плеча выше)
+const NECK_HOLD_RATIO = 1 - HEAD_R_FRAC*(2 + NECK_LEN_MULT*0.5);
+const B_TOP_TO_NECK_RATIO = 1 - NECK_HOLD_RATIO;
+const B_NECK_TO_FEET_RATIO = NECK_HOLD_RATIO;
+function topToHoldRatio(g){ return g==='neck' ? B_TOP_TO_NECK_RATIO : B_TOP_TO_HOLD_RATIO; }
+function holdToFeetRatio(g){ return g==='neck' ? B_NECK_TO_FEET_RATIO : B_HOLD_TO_FEET_RATIO; }
 const COM_RATIO = 0.55; // центр масс человека ≈ 55% роста от стоп (стандартная антропометрическая оценка)
+
+// --- Нагрузка на шею/позвоночник при хвате "за шею" (условная модель, не мед. норматив) ---
+const NECK_LIMIT_KG = 15;      // условный предел нагрузки на шейный отдел, кг
+const NECK_SAFE_KG = 5;        // ниже — практически без риска для дыхания/сосудов
+const NECK_ASPHYXIA_MIN_SEC = 4;   // минимальное время до потери сознания при огромной нагрузке
+const NECK_ASPHYXIA_MAX_SEC = 60;  // время при нагрузке чуть выше безопасной
 
 const HEIGHT_MIN_M = 1.5, HEIGHT_MAX_M = 2.0; // диапазон роста, регулируемый драгом
 
@@ -403,6 +416,12 @@ function buildStaticScene(){
 
   svg.appendChild(el('line',{id:'holdConnector',stroke:'#ff8a2b','stroke-width':3,'stroke-dasharray':'2,4',opacity:0}));
 
+  // === Выбор хвата — два кликабельных маркера на теле Б: подмышки / шея ===
+  svg.appendChild(el('circle',{r:13,fill:'none',stroke:'#ff8a2b','stroke-width':1.6,'stroke-dasharray':'3,3',id:'gripRingUnderarm',opacity:0}));
+  svg.appendChild(el('circle',{r:8,class:'pivot-dot',id:'gripDotUnderarm',style:'cursor:pointer;'}));
+  svg.appendChild(el('circle',{r:13,fill:'none',stroke:'#ffe066','stroke-width':1.6,'stroke-dasharray':'3,3',id:'gripRingNeck',opacity:0}));
+  svg.appendChild(el('circle',{r:8,fill:'#ffe066',id:'gripDotNeck',style:'cursor:pointer;filter:drop-shadow(0 0 6px rgba(255,224,102,0.8));'}));
+
   const comGroup = el('g',{id:'comMarker'});
   comGroup.appendChild(el('line',{x1:-10,y1:0,x2:10,y2:0,stroke:'#ff2ee6','stroke-width':2}));
   comGroup.appendChild(el('line',{x1:0,y1:-10,x2:0,y2:10,stroke:'#ff2ee6','stroke-width':2}));
@@ -452,6 +471,10 @@ function buildStaticScene(){
     // === HUD статуса (аналогичный узлу A блок; заменяет прежнюю отдельную панель) ===
     svg.appendChild(el('g',{id:'statusHud'}));
   }
+
+  // === HUD нагрузки на шею/позвоночник — независим от SHOW_HUD, появляется только
+  // при выбранном хвате "за шею" (см. updateNeckPanel в update()) ===
+  svg.appendChild(el('g',{id:'neckHud'}));
 }
 
 // строит suженный "капсульный" контур конечности между двумя точками
@@ -639,6 +662,17 @@ function attachSceneHandlers(){
     e.preventDefault();
     openCtxMenu('B', e.clientX, e.clientY);
   });
+
+  document.getElementById('gripDotUnderarm').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    grip = 'underarm';
+    update();
+  });
+  document.getElementById('gripDotNeck').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    grip = 'neck';
+    update();
+  });
 }
 
 ctxInput.addEventListener('input', applyCtxValue);
@@ -720,8 +754,8 @@ function update(){
   document.getElementById('wristRing').setAttribute('cy', hy);
 
   const bHeightPx = heightB_m*SCALE;
-  const bTopToHoldPx = B_TOP_TO_HOLD_RATIO*bHeightPx;
-  const bHoldToFeetPx = B_HOLD_TO_FEET_RATIO*bHeightPx;
+  const bTopToHoldPx = topToHoldRatio(grip)*bHeightPx;
+  const bHoldToFeetPx = holdToFeetRatio(grip)*bHeightPx;
 
   const freeFeetY = hy + bHoldToFeetPx;
   const feetTouching = freeFeetY >= GROUND_Y - 0.5;
@@ -799,6 +833,20 @@ function update(){
     connector.setAttribute('opacity', 0);
   }
 
+  // === Маркеры выбора хвата на теле Б — клик переключает режим (под мышки / за шею) ===
+  const armpitY = bTop + B_TOP_TO_HOLD_RATIO*bHeightPx;
+  const neckMarkerY = bTop + B_TOP_TO_NECK_RATIO*bHeightPx;
+  const gripDotUnderarm = document.getElementById('gripDotUnderarm');
+  const gripRingUnderarm = document.getElementById('gripRingUnderarm');
+  const gripDotNeck = document.getElementById('gripDotNeck');
+  const gripRingNeck = document.getElementById('gripRingNeck');
+  gripDotUnderarm.setAttribute('cx', hx); gripDotUnderarm.setAttribute('cy', armpitY);
+  gripRingUnderarm.setAttribute('cx', hx); gripRingUnderarm.setAttribute('cy', armpitY);
+  gripRingUnderarm.setAttribute('opacity', grip==='underarm' ? 0.9 : 0);
+  gripDotNeck.setAttribute('cx', hx); gripDotNeck.setAttribute('cy', neckMarkerY);
+  gripRingNeck.setAttribute('cx', hx); gripRingNeck.setAttribute('cy', neckMarkerY);
+  gripRingNeck.setAttribute('opacity', grip==='neck' ? 0.9 : 0);
+
   // === Весы: сила давления на пол под каждой фигурой ===
   const scaleA_N = F_A + compressionN;
   const scaleB_N = feetTouching ? (F - F_forMoment) : 0;
@@ -850,7 +898,7 @@ function update(){
     document.getElementById('deltaSceneTxt').textContent = 'Дельта: ' + deltaKg.toFixed(1) + ' кг / ' + deltaForceN.toFixed(0) + ' Н';
     document.getElementById('compressSceneTxt').textContent = 'Сжатие: ' + compressionKg.toFixed(1) + ' кг / ' + compressionN.toFixed(0) + ' Н';
 
-    const gripLabel = grip==='underarm' ? 'Хват: под мышки' : 'Хват: за запястье';
+    const gripLabel = grip==='underarm' ? 'Хват: под мышки' : 'Хват: за шею';
     document.getElementById('gripSceneTxt').textContent = gripLabel;
     document.getElementById('forceLeffSceneTxt').textContent = 'F: ' + F.toFixed(0) + ' Н  ·  L_eff: ' + Leff.toFixed(2) + ' м';
     const feetTxt = document.getElementById('feetSceneTxt');
@@ -873,12 +921,6 @@ function update(){
       limitPctScene.style.fill = '#ff2e4d';
     }
 
-    // расчёт "силы сжатия" хвата за запястье (аналог трения удержания), если применимо
-    let gripForce = null;
-    if(grip==='wrist' && !feetTouching){
-      gripForce = F/0.4;
-    }
-
     // === Статус (мед. оценка) — HUD-панель на сцене, аналогичная узлу A ===
     let level, title, text;
     if(M <= 100){
@@ -899,10 +941,6 @@ function update(){
     }
 
     let sub = '';
-    if(grip==='wrist' && gripForce){
-      sub += 'Хват за запястье: усилие сжатия кисти ≈ ' + gripForce.toFixed(0) + ' Н. ';
-      if(gripForce>250) sub += 'Превышает комфортный предел хвата — велика вероятность соскальзывания.';
-    }
     sub += (sub?' ':'') + (feetTouching
       ? 'Ступни Б касаются пола — часть веса удерживается опорой.'
       : 'Б полностью в подвесе — весь вес передаётся через кисть на сустав A.');
@@ -952,6 +990,76 @@ function update(){
     const statusBg = el('rect',{x:STATUS_X, y:STATUS_Y, width:STATUS_W, height:statusH, class:'hud-box'});
     statusHud.insertBefore(statusBg, statusHud.firstChild);
   }
+
+  updateNeckPanel(grip==='neck', F_forMoment);
+}
+
+// === Нагрузка на шею/позвоночник при хвате "за шею" (условная модель, не мед. норматив) ===
+function computeNeckStatus(forceN){
+  const kg = forceN / G;
+  const pct = (kg / NECK_LIMIT_KG) * 100;
+  let level, title, text;
+  if(kg <= NECK_SAFE_KG){
+    level='safe'; title='НОРМА';
+    text='Нагрузка на шею в пределах безопасной — дыхательные пути и сосуды не пережаты, риск минимален.';
+  } else {
+    const excess = kg - NECK_SAFE_KG;
+    const tSec = Math.max(NECK_ASPHYXIA_MIN_SEC, NECK_ASPHYXIA_MAX_SEC*Math.exp(-0.45*excess));
+    if(pct <= 100){
+      level='warn'; title='ПЕРЕЖАТИЕ ДЫХАТЕЛЬНЫХ ПУТЕЙ';
+      text='Хват частично пережимает трахею и сонные артерии. При сохранении нагрузки потеря сознания ориентировочно через '+tSec.toFixed(0)+' с.';
+    } else if(pct <= 180){
+      level='danger'; title='КРИТИЧЕСКОЕ УДУШЕНИЕ';
+      text='Полное пережатие дыхательных путей и сосудов шеи. Потеря сознания через '+tSec.toFixed(0)+' с; при продолжении удержания — смерть от асфиксии.';
+    } else {
+      level='danger'; title='ПЕРЕЛОМ ШЕЙНОГО ОТДЕЛА';
+      text='Нагрузка значительно превышает предел прочности шейного отдела позвоночника — реалистичен перелом позвонков с мгновенным параличом или смертью, независимо от асфиксии.';
+    }
+  }
+  return {kg, pct, level, title, text};
+}
+
+// строит/обновляет HUD-панель нагрузки на шею — видна только пока активен хват "за шею"
+function updateNeckPanel(active, forceN){
+  const g = document.getElementById('neckHud');
+  g.innerHTML = '';
+  if(!active) return;
+  const st = computeNeckStatus(forceN);
+  const levelColor = {safe:'#39ff8a', warn:'#ff8a2b', danger:'#ff2e4d'}[st.level];
+  const W = Math.max(230, Math.min(320, VB_W*0.30));
+  const X = VB_W - W - 16;
+  const Y = 16;
+  const padX = 14, padTop = 14, padBottom = 14;
+  const cy = {y: Y + padTop};
+  hudLine(g, X+padX, cy, 'НАГРУЗКА НА ШЕЮ / ПОЗВОНОЧНИК', {size:11, color:'#7f97ab'});
+
+  cy.y += 6;
+  const badgeFont = 13;
+  const badgeW = st.title.length*badgeFont*CHAR_W + 20;
+  const badgeH = badgeFont+14;
+  g.appendChild(el('rect',{x:X+padX,y:cy.y,width:badgeW,height:badgeH,
+    fill:'rgba(0,0,0,0.25)', stroke:levelColor, 'stroke-width':1.2}));
+  const badgeTxt = el('text',{x:X+padX+10,y:cy.y+badgeH-9,class:'hud-text'});
+  badgeTxt.style.fontSize = badgeFont+'px';
+  badgeTxt.style.fontWeight = 'bold';
+  badgeTxt.style.fill = levelColor;
+  badgeTxt.textContent = st.title;
+  g.appendChild(badgeTxt);
+  cy.y += badgeH + 14;
+
+  hudLine(g, X+padX, cy, 'Предел нагрузки: ' + Math.min(st.pct,999).toFixed(0) + '%', {size:13, color:levelColor, weight:'bold', leading:6});
+  hudLine(g, X+padX, cy, 'Нагрузка: ' + st.kg.toFixed(3) + ' кг', {size:13, color:'#c9dce2', weight:'bold', leading:10});
+
+  const bodyFont = 13;
+  const maxChars = charsPerWidth(W - padX*2, bodyFont);
+  const lines = wrapMonoText(st.text, maxChars);
+  for(const line of lines){
+    hudLine(g, X+padX, cy, line, {size:bodyFont, color:'#c9dce2', leading:5});
+  }
+
+  const H = cy.y - Y + padBottom - 4;
+  const bg = el('rect',{x:X, y:Y, width:W, height:H, class:'hud-box'});
+  g.insertBefore(bg, g.firstChild);
 }
 
 computeViewBox();
