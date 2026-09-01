@@ -236,6 +236,15 @@ let heightA_m = 1.75;
 let heightB_m = 1.75;
 let SHOULDER_Y = GROUND_Y - SHOULDER_RATIO*heightA_m*SCALE; // мутируется в update()
 
+// последняя посчитанная поза Б (обновляется в update()) — нужна, чтобы при клике по
+// маркеру хвата мгновенно навести кисть точно на него, без "протяжки" через тело
+let lastBTop = 0, lastBHeightPx = 0;
+// угол руки (0..180°), при котором кисть окажется ровно в targetY — обратная задача к positionHand
+function angleForHandY(targetY){
+  const ratio = Math.max(-1, Math.min(1, (targetY - SHOULDER_Y) / (L*SCALE)));
+  return Math.acos(ratio) * 180 / Math.PI;
+}
+
 // рисует пропорциональный силуэт человека внутри группы g,
 // top — координата верхушки головы, height — рост фигуры в пикселях
 // armSides: какие руки рисовать статично — [-1,1] (обе), [-1] (только левая, если правую
@@ -671,13 +680,19 @@ function attachSceneHandlers(){
     openCtxMenu('B', e.clientX, e.clientY);
   });
 
+  // Клик по маркеру — мгновенное переключение хвата: кисть сразу наводится точно на
+  // выбранную точку (без нагрузки), а не остаётся на месте с растянутым до неё коннектором.
   document.getElementById('gripDotUnderarm').addEventListener('click', (e)=>{
     e.stopPropagation();
+    const targetY = lastBTop + B_TOP_TO_HOLD_RATIO*lastBHeightPx;
+    angleDeg = Math.round(angleForHandY(targetY));
     grip = 'underarm';
     update();
   });
   document.getElementById('gripDotNeck').addEventListener('click', (e)=>{
     e.stopPropagation();
+    const targetY = lastBTop + B_TOP_TO_NECK_RATIO*lastBHeightPx;
+    angleDeg = Math.round(angleForHandY(targetY));
     grip = 'neck';
     update();
   });
@@ -842,6 +857,7 @@ function update(){
   }
 
   // === Маркеры выбора хвата на теле Б — клик переключает режим (под мышки / за шею) ===
+  lastBTop = bTop; lastBHeightPx = bHeightPx;
   const armpitY = bTop + B_TOP_TO_HOLD_RATIO*bHeightPx;
   const neckMarkerY = bTop + B_TOP_TO_NECK_RATIO*bHeightPx;
   const gripDotUnderarm = document.getElementById('gripDotUnderarm');
