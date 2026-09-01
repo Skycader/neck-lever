@@ -131,7 +131,12 @@
 <script>
 const L = 0.75;              // длина руки, м
 const DELTOID_ARM = 0.05;    // плечо дельтовидной мышцы от сустава, м
-const LIMIT_MOMENT = 150;    // предел момента для предплечья/сустава, Н·м
+const LIMIT_MOMENT = 150;    // предел момента для плечевого СУСТАВА (связки/лабрум), Н·м
+// Отдельный порог для самой дельтовидной МЫШЦЫ — 100% здесь и есть тот самый разумный
+// максимум, который способен выжать среднестатический нетренированный человек в этой
+// геометрии рычага; сустав и мышца — разные ткани с разным пределом, поэтому пороги разные
+// (и не обязаны совпадать, хотя оба линейно зависят от deltaForceN).
+const MUSCLE_MAX_FORCE_N = 4000;
 const G = 9.81;
 const ARM_MASS_KG = 3.5;     // масса собственной руки поднимающего (~5% массы тела взрослого ≈70 кг), кг
 
@@ -475,6 +480,9 @@ function buildStaticScene(){
   // === HUD нагрузки на шею/позвоночник — независим от SHOW_HUD, появляется только
   // при выбранном хвате "за шею" (см. updateNeckPanel в update()) ===
   svg.appendChild(el('g',{id:'neckHud'}));
+
+  // === HUD нагрузки на руку/плечо поднимающего — виден всегда, следует за плечом А ===
+  svg.appendChild(el('g',{id:'armHud'}));
 }
 
 // строит suженный "капсульный" контур конечности между двумя точками
@@ -992,6 +1000,7 @@ function update(){
   }
 
   updateNeckPanel(grip==='neck', F_forMoment, hx, neckMarkerY);
+  updateArmPanel(M, deltaForceN, deltaKg, SHOULDER_X, SHOULDER_Y);
 }
 
 // === Нагрузка на шею/позвоночник при хвате "за шею" (условная модель, не мед. норматив) ===
@@ -1050,6 +1059,75 @@ function updateNeckPanel(active, forceN, anchorX, anchorY){
 
   hudLine(g, X+padX, cy, 'Предел: ' + Math.min(st.pct,999).toFixed(0) + '%', {size:6.5, color:levelColor, weight:'bold', leading:3});
   hudLine(g, X+padX, cy, 'Нагрузка: ' + st.kg.toFixed(3) + ' кг', {size:6.5, color:'#c9dce2', weight:'bold', leading:5});
+
+  const bodyFont = 6.5;
+  const maxChars = charsPerWidth(W - padX*2, bodyFont);
+  const lines = wrapMonoText(st.text, maxChars);
+  for(const line of lines){
+    hudLine(g, X+padX, cy, line, {size:bodyFont, color:'#c9dce2', leading:2.5});
+  }
+
+  const H = cy.y - Y + padBottom - 2;
+  const bg = el('rect',{x:X, y:Y, width:W, height:H, class:'hud-box'});
+  g.insertBefore(bg, g.firstChild);
+}
+
+// === Нагрузка на руку/плечо поднимающего (А) — та же дельта/момент, что и раньше
+// в узле A, но теперь как два отдельных порога: мышца (деltoid) и сустав (связки/лабрум) ===
+function computeArmStatus(M, deltaForceN){
+  const musclePct = (deltaForceN / MUSCLE_MAX_FORCE_N) * 100;
+  const jointPct = (M / LIMIT_MOMENT) * 100;
+  let level, title, text;
+  if(M <= 100){
+    level='safe'; title='НОРМА';
+    text='Нагрузка на плечевой сустав и дельтовидную мышцу в пределах физиологической нормы. Удержание устойчиво, риск травмы минимален.';
+  } else if(M <= LIMIT_MOMENT){
+    level='safe'; title='ПОВЫШЕННАЯ НАГРУЗКА';
+    text='Момент приближается к пределу выносливости сустава. Ощутимая усталостная нагрузка на дельтовидную и надостную мышцы, возможен дискомфорт при удержании дольше нескольких секунд.';
+  } else if(M <= 200){
+    level='warn'; title='ПЕРЕГРУЗКА СУСТАВА';
+    text='Момент превышает физиологический лимит предплечья. Высокий риск растяжения/микроразрыва сухожилия дельтовидной мышцы и импинджмент-синдрома плечевого сустава.';
+  } else if(M <= 280){
+    level='danger'; title='КРИТИЧЕСКАЯ ПЕРЕГРУЗКА';
+    text='Момент существенно превышает предел прочности связочного аппарата плеча. Реалистичный риск подвывиха/вывиха плечевого сустава и частичного разрыва сухожилия дельтовидной мышцы.';
+  } else {
+    level='danger'; title='ПРЕДЕЛ ПРОЧНОСТИ ПРЕВЫШЕН';
+    text='Момент значительно превышает предел прочности сухожильно-связочного аппарата плеча. Удержание в этой позе физически невозможно дольше долей секунды — реалистичен полный разрыв сухожилия и/или вывих сустава.';
+  }
+  return {musclePct, jointPct, level, title, text};
+}
+
+// строит/обновляет компактную HUD-панель нагрузки на руку — видна всегда, следует за плечом А
+function updateArmPanel(M, deltaForceN, deltaKg, anchorX, anchorY){
+  const g = document.getElementById('armHud');
+  g.innerHTML = '';
+  const st = computeArmStatus(M, deltaForceN);
+  const levelColor = {safe:'#39ff8a', warn:'#ff8a2b', danger:'#ff2e4d'}[st.level];
+  const W = Math.max(120, Math.min(190, VB_W*0.18));
+  // якорь слева от А (справа — Б и его собственная панель); не залезаем на линейку слева
+  const X = Math.max(78, Math.min(VB_W - W - 8, anchorX - W - 22));
+  const Y = Math.max(8, anchorY - 10);
+  const padX = 8, padTop = 8, padBottom = 8;
+  const cy = {y: Y + padTop};
+  hudLine(g, X+padX, cy, 'НАГРУЗКА НА РУКУ', {size:5.5, color:'#7f97ab'});
+
+  cy.y += 3;
+  const badgeFont = 6.5;
+  const badgeW = st.title.length*badgeFont*CHAR_W + 12;
+  const badgeH = badgeFont+8;
+  g.appendChild(el('rect',{x:X+padX,y:cy.y,width:badgeW,height:badgeH,
+    fill:'rgba(0,0,0,0.25)', stroke:levelColor, 'stroke-width':0.8}));
+  const badgeTxt = el('text',{x:X+padX+6,y:cy.y+badgeH-5.5,class:'hud-text'});
+  badgeTxt.style.fontSize = badgeFont+'px';
+  badgeTxt.style.fontWeight = 'bold';
+  badgeTxt.style.fill = levelColor;
+  badgeTxt.textContent = st.title;
+  g.appendChild(badgeTxt);
+  cy.y += badgeH + 7;
+
+  hudLine(g, X+padX, cy, 'Нагрузка: ' + deltaKg.toFixed(1) + ' кг', {size:6.5, color:'#c9dce2', weight:'bold', leading:5});
+  hudLine(g, X+padX, cy, 'Мышца: ' + Math.min(st.musclePct,999).toFixed(0) + '% от предела', {size:6.5, color:levelColor, weight:'bold', leading:3});
+  hudLine(g, X+padX, cy, 'Сустав: ' + Math.min(st.jointPct,999).toFixed(0) + '% от предела', {size:6.5, color:levelColor, weight:'bold', leading:5});
 
   const bodyFont = 6.5;
   const maxChars = charsPerWidth(W - padX*2, bodyFont);
