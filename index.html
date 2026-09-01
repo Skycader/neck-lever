@@ -991,7 +991,7 @@ function update(){
     statusHud.insertBefore(statusBg, statusHud.firstChild);
   }
 
-  updateNeckPanel(grip==='neck', F_forMoment);
+  updateNeckPanel(grip==='neck', F_forMoment, hx, neckMarkerY);
 }
 
 // === Нагрузка на шею/позвоночник при хвате "за шею" (условная модель, не мед. норматив) ===
@@ -1020,44 +1020,45 @@ function computeNeckStatus(forceN){
 }
 
 // строит/обновляет HUD-панель нагрузки на шею — видна только пока активен хват "за шею"
-function updateNeckPanel(active, forceN){
+function updateNeckPanel(active, forceN, anchorX, anchorY){
   const g = document.getElementById('neckHud');
   g.innerHTML = '';
   if(!active) return;
   const st = computeNeckStatus(forceN);
   const levelColor = {safe:'#39ff8a', warn:'#ff8a2b', danger:'#ff2e4d'}[st.level];
-  const W = Math.max(230, Math.min(320, VB_W*0.30));
-  const X = VB_W - W - 16;
-  const Y = 16;
-  const padX = 14, padTop = 14, padBottom = 14;
+  // скромный размер и вдвое уменьшенный текст; окно следует за Б (привязано к anchorX/anchorY)
+  const W = Math.max(120, Math.min(190, VB_W*0.18));
+  const X = Math.max(8, Math.min(VB_W - W - 8, anchorX + 22));
+  const Y = Math.max(8, anchorY - 10);
+  const padX = 8, padTop = 8, padBottom = 8;
   const cy = {y: Y + padTop};
-  hudLine(g, X+padX, cy, 'НАГРУЗКА НА ШЕЮ / ПОЗВОНОЧНИК', {size:11, color:'#7f97ab'});
+  hudLine(g, X+padX, cy, 'НАГРУЗКА НА ШЕЮ', {size:5.5, color:'#7f97ab'});
 
-  cy.y += 6;
-  const badgeFont = 13;
-  const badgeW = st.title.length*badgeFont*CHAR_W + 20;
-  const badgeH = badgeFont+14;
+  cy.y += 3;
+  const badgeFont = 6.5;
+  const badgeW = st.title.length*badgeFont*CHAR_W + 12;
+  const badgeH = badgeFont+8;
   g.appendChild(el('rect',{x:X+padX,y:cy.y,width:badgeW,height:badgeH,
-    fill:'rgba(0,0,0,0.25)', stroke:levelColor, 'stroke-width':1.2}));
-  const badgeTxt = el('text',{x:X+padX+10,y:cy.y+badgeH-9,class:'hud-text'});
+    fill:'rgba(0,0,0,0.25)', stroke:levelColor, 'stroke-width':0.8}));
+  const badgeTxt = el('text',{x:X+padX+6,y:cy.y+badgeH-5.5,class:'hud-text'});
   badgeTxt.style.fontSize = badgeFont+'px';
   badgeTxt.style.fontWeight = 'bold';
   badgeTxt.style.fill = levelColor;
   badgeTxt.textContent = st.title;
   g.appendChild(badgeTxt);
-  cy.y += badgeH + 14;
+  cy.y += badgeH + 7;
 
-  hudLine(g, X+padX, cy, 'Предел нагрузки: ' + Math.min(st.pct,999).toFixed(0) + '%', {size:13, color:levelColor, weight:'bold', leading:6});
-  hudLine(g, X+padX, cy, 'Нагрузка: ' + st.kg.toFixed(3) + ' кг', {size:13, color:'#c9dce2', weight:'bold', leading:10});
+  hudLine(g, X+padX, cy, 'Предел: ' + Math.min(st.pct,999).toFixed(0) + '%', {size:6.5, color:levelColor, weight:'bold', leading:3});
+  hudLine(g, X+padX, cy, 'Нагрузка: ' + st.kg.toFixed(3) + ' кг', {size:6.5, color:'#c9dce2', weight:'bold', leading:5});
 
-  const bodyFont = 13;
+  const bodyFont = 6.5;
   const maxChars = charsPerWidth(W - padX*2, bodyFont);
   const lines = wrapMonoText(st.text, maxChars);
   for(const line of lines){
-    hudLine(g, X+padX, cy, line, {size:bodyFont, color:'#c9dce2', leading:5});
+    hudLine(g, X+padX, cy, line, {size:bodyFont, color:'#c9dce2', leading:2.5});
   }
 
-  const H = cy.y - Y + padBottom - 4;
+  const H = cy.y - Y + padBottom - 2;
   const bg = el('rect',{x:X, y:Y, width:W, height:H, class:'hud-box'});
   g.insertBefore(bg, g.firstChild);
 }
@@ -1069,8 +1070,13 @@ window.addEventListener('resize', ()=>{
   computeViewBox();
   buildStaticScene();
   attachSceneHandlers();
+  update();
 });
 
+// Сцена перерисовывается только по событию (драг, клик, ресайз), а не в вечном цикле —
+// иначе в простое всё пересоздавалось 60 раз в секунду и заметно мерцало без всякой пользы.
+// Непрерывный цикл нужен только для анимации "нестабильности" (wobble) и запускается/
+// останавливается сам по факту включения/выключения wobbleEnabled.
 let lastTs = null;
 function animate(ts){
   if(lastTs === null) lastTs = ts;
@@ -1078,9 +1084,11 @@ function animate(ts){
   lastTs = ts;
   wobblePhase += dt * WOBBLE_SPEED;
   update();
-  requestAnimationFrame(animate);
+  if(wobbleEnabled) requestAnimationFrame(animate);
+  else lastTs = null;
 }
-requestAnimationFrame(animate);
+
+update(); // первичная отрисовка — без запуска бесконечного цикла
 
 </script>
 </body>
