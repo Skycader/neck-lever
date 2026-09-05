@@ -202,8 +202,14 @@ function holdToFeetRatio(g){ return g==='neck' ? B_NECK_TO_FEET_RATIO : B_HOLD_T
 const COM_RATIO = 0.55; // центр масс человека ≈ 55% роста от стоп (стандартная антропометрическая оценка)
 
 // --- Нагрузка на шею/позвоночник при хвате "за шею" (условная модель, не мед. норматив) ---
-const NECK_LIMIT_KG = 15;      // условный предел нагрузки на шейный отдел, кг
-const NECK_SAFE_KG = 5;        // ниже — практически без риска для дыхания/сосудов
+// Перелом шейных позвонков от чистого растяжения весом наступает в реальности при
+// ориентировочно 150-300 кг (не 15 — здоровая шея спокойно держит статически 15-30 кг,
+// тренированная — 50-80 кг). 100%-й порог ниже — это порог АСФИКСИИ (пережатие трахеи/
+// сонных артерий рукой/предплечьем при хвате), а не порог перелома — это два разных
+// механизма травмы с очень разными пределами, и раньше они были ошибочно объединены.
+const NECK_FRACTURE_KG = 200;  // предел на разрыв/перелом шейного отдела, кг (нижняя граница реального диапазона 150-300)
+const NECK_LIMIT_KG = NECK_FRACTURE_KG; // 100% на шкале — порог перелома
+const NECK_SAFE_KG = 5;        // ниже — практически без риска для дыхания/сосудов (это порог начала асфиксии, не перелома)
 const NECK_ASPHYXIA_MIN_SEC = 4;   // минимальное время до потери сознания при огромной нагрузке
 const NECK_ASPHYXIA_MAX_SEC = 60;  // время при нагрузке чуть выше безопасной
 
@@ -492,6 +498,9 @@ function buildStaticScene(){
 
   // === HUD нагрузки на руку/плечо поднимающего — виден всегда, следует за плечом А ===
   svg.appendChild(el('g',{id:'armHud'}));
+
+  // === Шуточный HUD ощущений поднимаемого при хвате "под мышки" — следует за подмышкой Б ===
+  svg.appendChild(el('g',{id:'underarmHud'}));
 }
 
 // строит suженный "капсульный" контур конечности между двумя точками
@@ -1017,6 +1026,8 @@ function update(){
 
   updateNeckPanel(grip==='neck', F_forMoment, hx, neckMarkerY);
   updateArmPanel(M, deltaForceN, deltaKg, SHOULDER_X, SHOULDER_Y);
+  const underarmLoadPct = mass > 0 ? Math.min(100, (F_forMoment/G)/mass*100) : 0;
+  updateUnderarmPanel(grip==='underarm', underarmLoadPct, hx, armpitY);
 }
 
 // === Нагрузка на шею/позвоночник при хвате "за шею" (условная модель, не мед. норматив) ===
@@ -1027,19 +1038,21 @@ function computeNeckStatus(forceN){
   if(kg <= NECK_SAFE_KG){
     level='safe'; title='НОРМА';
     text='Нагрузка на шею в пределах безопасной — дыхательные пути и сосуды не пережаты, риск минимален.';
-  } else {
+  } else if(kg <= NECK_FRACTURE_KG){
+    // асфиксия (мягкие ткани — трахея, сонные/ярёмные сосуды) наступает НАМНОГО раньше
+    // перелома позвонков: это разные ткани с разным пределом прочности
     const excess = kg - NECK_SAFE_KG;
     const tSec = Math.max(NECK_ASPHYXIA_MIN_SEC, NECK_ASPHYXIA_MAX_SEC*Math.exp(-0.45*excess));
-    if(pct <= 100){
+    if(pct <= 50){
       level='warn'; title='ПЕРЕЖАТИЕ ДЫХАТЕЛЬНЫХ ПУТЕЙ';
-      text='Хват частично пережимает трахею и сонные артерии. При сохранении нагрузки потеря сознания ориентировочно через '+tSec.toFixed(0)+' с.';
-    } else if(pct <= 180){
-      level='danger'; title='КРИТИЧЕСКОЕ УДУШЕНИЕ';
-      text='Полное пережатие дыхательных путей и сосудов шеи. Потеря сознания через '+tSec.toFixed(0)+' с; при продолжении удержания — смерть от асфиксии.';
+      text='Хват частично пережимает трахею и сонные артерии. При сохранении нагрузки потеря сознания ориентировочно через '+tSec.toFixed(0)+' с. Позвонки пока целы — предел на разрыв на порядок выше.';
     } else {
-      level='danger'; title='ПЕРЕЛОМ ШЕЙНОГО ОТДЕЛА';
-      text='Нагрузка значительно превышает предел прочности шейного отдела позвоночника — реалистичен перелом позвонков с мгновенным параличом или смертью, независимо от асфиксии.';
+      level='danger'; title='КРИТИЧЕСКОЕ УДУШЕНИЕ';
+      text='Полное пережатие дыхательных путей и сосудов шеи. Потеря сознания через '+tSec.toFixed(0)+' с; при продолжении удержания — смерть от асфиксии. Перелома позвонков ещё нет.';
     }
+  } else {
+    level='danger'; title='ПЕРЕЛОМ ШЕЙНОГО ОТДЕЛА';
+    text='Нагрузка превышает предел прочности шейных позвонков на разрыв — реалистичен перелом с мгновенным параличом или смертью, независимо от асфиксии.';
   }
   return {kg, pct, level, title, text};
 }
@@ -1144,6 +1157,69 @@ function updateArmPanel(M, deltaForceN, deltaKg, anchorX, anchorY){
   hudLine(g, X+padX, cy, 'Нагрузка: ' + deltaKg.toFixed(1) + ' кг', {size:6.5, color:'#c9dce2', weight:'bold', leading:5});
   hudLine(g, X+padX, cy, 'Мышца: ' + Math.min(st.musclePct,999).toFixed(0) + '% от предела', {size:6.5, color:levelColor, weight:'bold', leading:3});
   hudLine(g, X+padX, cy, 'Сустав: ' + Math.min(st.jointPct,999).toFixed(0) + '% от предела', {size:6.5, color:levelColor, weight:'bold', leading:5});
+
+  const bodyFont = 6.5;
+  const maxChars = charsPerWidth(W - padX*2, bodyFont);
+  const lines = wrapMonoText(st.text, maxChars);
+  for(const line of lines){
+    hudLine(g, X+padX, cy, line, {size:bodyFont, color:'#c9dce2', leading:2.5});
+  }
+
+  const H = cy.y - Y + padBottom - 2;
+  const bg = el('rect',{x:X, y:Y, width:W, height:H, class:'hud-box'});
+  g.insertBefore(bg, g.firstChild);
+}
+
+// === Шуточная панель "ощущения поднимаемого" при хвате под мышки — без травм и смертей,
+// просто бытовой дискомфорт (в отличие от серьёзного шейного HUD). pct — доля веса тела,
+// повисшая на подмышках (0% — стоит на своих ногах, 100% — висит целиком на руках А).
+function computeUnderarmFeel(pct){
+  let level, title, text;
+  if(pct <= 15){
+    level='safe'; title='КАК ДОМА';
+    text='Вес почти весь на своих ногах, руки А только слегка обнимают — не более чем дружеские объятия.';
+  } else if(pct <= 45){
+    level='safe'; title='ТЕРПИМО';
+    text='Подмышки ощутимо сжаты, кожа немного тянется. Слегка неудобно, но вполне можно потерпеть.';
+  } else if(pct <= 75){
+    level='warn'; title='НЕПРИЯТНО';
+    text='Хват сдавливает подмышки будто тисками, руки начинает покалывать — кровоток к кистям явно нарушен.';
+  } else {
+    level='danger'; title='ВСЁ ЗАТЕКЛО';
+    text='Руки онемели, пальцы почти не чувствуются, под мышками к утру будут синяки. Ещё немного — и точно попросится вниз.';
+  }
+  return {level, title, text};
+}
+
+// строит/обновляет шуточную HUD-панель — видна только при хвате "под мышки", следует за подмышкой Б
+function updateUnderarmPanel(active, pct, anchorX, anchorY){
+  const g = document.getElementById('underarmHud');
+  g.innerHTML = '';
+  if(!active) return;
+  const st = computeUnderarmFeel(pct);
+  const levelColor = {safe:'#39ff8a', warn:'#ff8a2b', danger:'#ff2e4d'}[st.level];
+  const W = Math.max(120, Math.min(190, VB_W*0.18));
+  const X = Math.max(8, Math.min(VB_W - W - 8, anchorX + 22));
+  const Y = Math.max(8, anchorY - 10);
+  const padX = 8, padTop = 8, padBottom = 8;
+  const cy = {y: Y + padTop};
+  hudLine(g, X+padX, cy, 'ОЩУЩЕНИЯ ПОДНИМАЕМОГО', {size:5.5, color:'#7f97ab'});
+
+  cy.y += 3;
+  const badgeFont = 6.5;
+  const badgeW = st.title.length*badgeFont*CHAR_W + 12;
+  const badgeH = badgeFont+8;
+  g.appendChild(el('rect',{x:X+padX,y:cy.y,width:badgeW,height:badgeH,
+    fill:'rgba(0,0,0,0.25)', stroke:levelColor, 'stroke-width':0.8}));
+  const badgeTxt = el('text',{x:X+padX+6,y:cy.y+badgeH-5.5,class:'hud-text'});
+  badgeTxt.style.fontSize = badgeFont+'px';
+  badgeTxt.style.fontWeight = 'bold';
+  badgeTxt.style.fill = levelColor;
+  badgeTxt.textContent = st.title;
+  g.appendChild(badgeTxt);
+  cy.y += badgeH + 7;
+
+  hudLine(g, X+padX, cy, 'На подмышках: ' + pct.toFixed(0) + '% веса', {size:6.5, color:levelColor, weight:'bold', leading:5});
 
   const bodyFont = 6.5;
   const maxChars = charsPerWidth(W - padX*2, bodyFont);
