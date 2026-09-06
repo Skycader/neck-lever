@@ -436,6 +436,10 @@ function buildStaticScene(){
 
   svg.appendChild(el('line',{id:'holdConnector',stroke:'#ff8a2b','stroke-width':3,'stroke-dasharray':'2,4',opacity:0}));
 
+  // === Высота стоп Б над полом (видна, только когда ноги оторваны от земли) ===
+  svg.appendChild(el('line',{id:'airGapLine',stroke:'#ffe066','stroke-width':1,'stroke-dasharray':'2,3',opacity:0}));
+  svg.appendChild(el('text',{id:'airGapTxt',class:'hud-text',style:'font-size:11px;fill:#ffe066;text-anchor:middle;',opacity:0}));
+
   // === Выбор хвата — два кликабельных маркера на теле Б: подмышки / шея ===
   svg.appendChild(el('circle',{r:13,fill:'none',stroke:'#ff8a2b','stroke-width':1.6,'stroke-dasharray':'3,3',id:'gripRingUnderarm',opacity:0}));
   svg.appendChild(el('circle',{r:8,class:'pivot-dot',id:'gripDotUnderarm',style:'cursor:pointer;'}));
@@ -863,6 +867,23 @@ function update(){
     connector.setAttribute('opacity', 0.85);
   } else {
     connector.setAttribute('opacity', 0);
+  }
+
+  // === Высота стоп Б над полом — видна, только когда ноги действительно оторваны от земли ===
+  const airGapM = Math.max(0, (GROUND_Y - bFeetY) / SCALE);
+  const airGapLine = document.getElementById('airGapLine');
+  const airGapTxt = document.getElementById('airGapTxt');
+  if(!feetTouching && airGapM > 0.005){
+    airGapLine.setAttribute('x1', hx); airGapLine.setAttribute('y1', bFeetY);
+    airGapLine.setAttribute('x2', hx); airGapLine.setAttribute('y2', GROUND_Y);
+    airGapLine.setAttribute('opacity', 0.7);
+    airGapTxt.setAttribute('x', hx + 18);
+    airGapTxt.setAttribute('y', (bFeetY + GROUND_Y) / 2 + 4);
+    airGapTxt.setAttribute('opacity', 1);
+    airGapTxt.textContent = airGapM.toFixed(2) + ' м над полом';
+  } else {
+    airGapLine.setAttribute('opacity', 0);
+    airGapTxt.setAttribute('opacity', 0);
   }
 
   // === Маркеры выбора хвата на теле Б — клик переключает режим (под мышки / за шею) ===
